@@ -77,7 +77,12 @@ io.on('connection', (socket) => {
     });
 });
 
+// Add this at the top to handle Render's dynamic port
 const PORT = process.env.PORT || 3000;
+
+// Serve files from 'public' folder
+app.use(express.static('public'));
+
 server.listen(PORT, () => {
-    console.log(`Pong Server running on port ${PORT}`);
+    console.log(`Server waking up on port ${PORT}...`);
 });
