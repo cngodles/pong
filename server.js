@@ -13,6 +13,11 @@ app.use(express.static('public'));
 
 let hostId = null;
 let challengerId = null;
+let userCount = 0;
+
+function broadcastUserCount() {
+    io.emit('visitor_count', userCount);
+}
 
 // Validation Helper: Checks if the data is a valid Pong state
 function isValidState(data) {
