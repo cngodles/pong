@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Hero Pong</title>
+    <style>
+        body {
+            margin: 0;
+            background: #111;
+            color: #eee;
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+        canvas {
+            background: #222;
+            border: 2px solid #444;
+            display: block;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            width: 100%;
+            text-align: center;
+            pointer-events: none; /* Let clicks pass through to canvas */
+        }
+        .status {
+            background: rgba(0, 0, 0, 0.7);
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div id="ui-layer">
+            <span id="status-text" class="status">Connecting...</span>
+        </div>
+        <canvas id="pongCanvas" width="800" height="400"></canvas>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const canvas = document.getElementById('pongCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusText = document.getElementById('status-text');
+
+        // Game Constants
+        const PADDLE_WIDTH = 10;
+        const PADDLE_HEIGHT = 80;
+        const BALL_SIZE = 8;
+        
+        // Game State
+        let myRole = null; // 'HOST' or 'SPECTATOR'
+        
+        let ball = { x: 400, y: 200, dx: 4, dy: 4 };
+        let playerY = 160; // Left paddle (controlled by user if Host)
+        let aiY = 160;     // Right paddle (AI or Player 2)
+        
+        // Input tracking
+        let mouseY = 200;
+
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseY = e.clientY - rect.top;
+        });
+
+        // Socket Events
+        socket.on('role', (role) => {
+            myRole = role;
+            statusText.innerText = role === 'HOST' ? 'Playing vs AI (Broadcasting)' : 'Spectating Host';
+        });
+
+        // Receive state if we are a spectator
+        socket.on('spectator_update', (state) => {
+            if (myRole === 'SPECTATOR') {
+                ball = state.ball;
+                playerY = state.playerY;
+                aiY = state.aiY;
+            }
+        });
+
+        function update() {
+            if (myRole === 'HOST') {
+                // 1. Update Player Paddle
+                playerY = mouseY - PADDLE_HEIGHT / 2;
+
+                // 2. Simple AI for Right Paddle
+                // AI tries to match ball height with a slight delay/speed limit
+                let targetY = ball.y - PADDLE_HEIGHT / 2;
+                aiY += (targetY - aiY) * 0.1; 
+
+                // 3. Move Ball
+                ball.x += ball.dx;
+                ball.y += ball.dy;
+
+                // Wall Collisions (Top/Bottom)
+                if (ball.y < 0 || ball.y > canvas.height) ball.dy *= -1;
+
+                // Paddle Collisions
+                // Player (Left)
+                if (ball.x < PADDLE_WIDTH && ball.y > playerY && ball.y < playerY + PADDLE_HEIGHT) {
+                    ball.dx *= -1;
+                    // Add some spin/speed variation
+                    ball.dx *= 1.05; 
+                }
+                
+                // AI (Right)
+                if (ball.x > canvas.width - PADDLE_WIDTH && ball.y > aiY && ball.y < aiY + PADDLE_HEIGHT) {
+                    ball.dx *= -1;
+                }
+
+                // Reset on miss
+                if (ball.x < 0 || ball.x > canvas.width) {
+                    ball.x = canvas.width / 2;
+                    ball.y = canvas.height / 2;
+                    ball.dx = 4 * (Math.random() > 0.5 ? 1 : -1);
+                    ball.dy = 4 * (Math.random() > 0.5 ? 1 : -1);
+                }
+
+                // 4. Broadcast State
+                broadcastState();
+            }
+        }
+
+        function broadcastState() {
+            // Send data to server for spectators
+            socket.emit('host_update', {
+                ball: ball,
+                playerY: playerY,
+                aiY: aiY
+            });
+        }
+
+        function draw() {
+            // Clear screen
+            ctx.fillStyle = '#222';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Net
+            ctx.setLineDash([10, 15]);
+            ctx.beginPath();
+            ctx.moveTo(canvas.width / 2, 0);
+            ctx.lineTo(canvas.width / 2, canvas.height);
+            ctx.strokeStyle = '#444';
+            ctx.stroke();
+
+            // Draw Paddles
+            ctx.fillStyle = '#eee';
+            ctx.fillRect(0, playerY, PADDLE_WIDTH, PADDLE_HEIGHT); // Left
+            ctx.fillRect(canvas.width - PADDLE_WIDTH, aiY, PADDLE_WIDTH, PADDLE_HEIGHT); // Right
+
+            // Draw Ball
+            ctx.beginPath();
+            ctx.arc(ball.x, ball.y, BALL_SIZE, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        gameLoop();
+
+    </script>
+</body>
+</html>
