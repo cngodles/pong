@@ -4,9 +4,8 @@ const http = require('http');
 const server = http.createServer(app);
 const { Server } = require("socket.io");
 
-// Security: Max 1kb per packet to prevent buffer overflow attacks
 const io = new Server(server, {
-    maxHttpBufferSize: 1e3 
+    maxHttpBufferSize: 1e3 // Security: 1kb limit
 });
 
 app.use(express.static('public'));
@@ -14,24 +13,13 @@ app.use(express.static('public'));
 let hostId = null;
 let challengerId = null;
 let userCount = 0;
-
-function broadcastUserCount() {
-    io.emit('visitor_count', userCount);
-}
-
-// Validation Helper: Checks if the data is a valid Pong state
-function isValidState(data) {
-    return data && 
-           typeof data.playerY === 'number' && 
-           typeof data.opponentY === 'number' &&
-           data.ball && typeof data.ball.x === 'number';
-}
+let isMatchInProgress = false;
 
 io.on('connection', (socket) => {
     userCount++;
-    broadcastUserCount(); // Notify everyone someone joined
-    console.log(`Users online: ${userCount}`);
-    
+    io.emit('visitor_count', userCount);
+
+    // Initial Role Assignment
     if (!hostId) {
         hostId = socket.id;
         socket.emit('role', 'HOST');
@@ -39,31 +27,33 @@ io.on('connection', (socket) => {
         socket.emit('role', 'SPECTATOR');
     }
 
-    // FIX: Relay challenge and confirm to Challenger
+    // Challenge Logic
     socket.on('challenge_request', () => {
-        if (hostId && socket.id !== hostId) {
+        // Only allow a challenge if there is a host and no active match
+        if (hostId && !isMatchInProgress && socket.id !== hostId) {
             io.to(hostId).emit('challenge_received', socket.id);
-            socket.emit('challenge_pending'); // Tell challenger it's sent
+            socket.emit('challenge_pending');
         }
     });
 
     socket.on('accept_challenge', (id) => {
         if (socket.id === hostId) {
             challengerId = id;
+            isMatchInProgress = true;
             io.emit('game_mode_change', { mode: 'PVP', challengerId: id });
         }
     });
 
-    // SECURITY: Validate host data before broadcasting
+    // Relay Game State
     socket.on('host_update', (gameState) => {
-        if (socket.id === hostId && isValidState(gameState)) {
+        if (socket.id === hostId) {
             socket.broadcast.emit('spectator_update', gameState);
         }
     });
 
-    // SECURITY: Validate P2 movement data (must be a number)
+    // Relay P2 Input
     socket.on('p2_move', (y) => {
-        if (socket.id === challengerId && typeof y === 'number') {
+        if (socket.id === challengerId) {
             io.to(hostId).emit('p2_update', y);
         }
     });
@@ -75,21 +65,25 @@ io.on('connection', (socket) => {
     });
 
     socket.on('request_rematch', () => {
-        // In a simple version, we just reset for everyone immediately
-        // In a complex version, you'd wait for both to click 'Rematch'
         io.emit('rematch_started');
     });
 
     socket.on('disconnect', () => {
         userCount--;
-        broadcastUserCount(); // Notify everyone someone left
+        io.emit('visitor_count', userCount);
+
         if (socket.id === hostId) {
             hostId = null;
             challengerId = null;
-            io.emit('reset_game');
+            isMatchInProgress = false;
+            io.emit('reset_game'); // Forces everyone to find a new host
+        } else if (socket.id === challengerId) {
+            challengerId = null;
+            isMatchInProgress = false;
+            io.emit('challenger_left'); // Tells host to go back to AI
         }
     });
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Secure Server on ${PORT}`));
+server.listen(PORT, () => console.log(`Server on port ${PORT}`));

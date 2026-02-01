@@ -10,23 +10,32 @@
             margin: 0; background: #111; color: #eee; 
             font-family: 'Courier New', Courier, monospace;
             display: flex; flex-direction: column; align-items: center; 
-            justify-content: center; height: 100vh; 
-            overflow: hidden; touch-action: none; /* Crucial for mobile */
+            justify-content: center; height: 100vh; width: 100vw;
+            overflow: hidden; touch-action: none; 
         }
         
         #game-container { 
-            position: relative; width: 95vw; max-width: 800px;
-            aspect-ratio: 2 / 1; border: 2px solid #333;
+            position: relative; 
+            width: 95vw; 
+            max-width: 800px;
+            max-height: 90vh; /* Prevents overflow in landscape */
+            aspect-ratio: 2 / 1; 
+            border: 2px solid #333;
+            background: #222;
         }
         
-        canvas { width: 100%; height: 100%; background: #222; display: block; }
+        canvas { width: 100%; height: 100%; display: block; }
 
-        /* Loading Overlay */
-        #loading-overlay {
+        /* Overlays */
+        #loading-overlay, #win-overlay, #orientation-overlay {
             position: absolute; inset: 0; background: #111;
             display: flex; flex-direction: column; align-items: center;
-            justify-content: center; z-index: 100; transition: opacity 0.5s;
+            justify-content: center; z-index: 100; text-align: center;
         }
+
+        #orientation-overlay { display: none; z-index: 200; }
+        @media (orientation: portrait) { #orientation-overlay { display: flex; } }
+
         .spinner {
             width: 40px; height: 40px; border: 4px solid #333;
             border-top: 4px solid var(--accent); border-radius: 50%;
@@ -36,123 +45,75 @@
 
         /* Scoreboard */
         .scoreboard {
-            position: absolute; top: 15%; width: 100%;
+            position: absolute; top: 10%; width: 100%;
             display: flex; justify-content: center;
-            font-size: clamp(30px, 8vw, 60px); font-weight: bold;
+            font-size: clamp(24px, 6vw, 60px); font-weight: bold;
             color: rgba(255, 255, 255, 0.15); pointer-events: none;
         }
-        .score-divider { margin: 0 20px; }
 
         #ui-layer {
             position: absolute; inset: 0; pointer-events: none;
-            display: flex; flex-direction: column; justify-content: space-between; padding: 10px;
+            display: flex; flex-direction: column; justify-content: space-between; padding: 15px;
         }
-        .status { 
-            background: rgba(0, 0, 0, 0.8); padding: 4px 10px; 
-            border-radius: 4px; font-size: 10px; text-transform: uppercase;
-        }
-        .interactive { pointer-events: auto; }
+        .status { background: rgba(0, 0, 0, 0.8); padding: 5px 12px; border-radius: 4px; font-size: 10px; }
+        
         .btn {
-            background: #fff; border: none; padding: 12px 24px; 
+            background: #fff; border: none; padding: 12px 20px; 
             font-weight: bold; cursor: pointer; border-radius: 4px; font-family: inherit;
+            pointer-events: auto;
         }
-        #challenge-area { position: absolute; bottom: 10%; width: 100%; text-align: center; display: none; }
-        /* Landscape Orientation Overlay */
-        #orientation-overlay {
-            position: fixed;
-            inset: 0;
-            background: #111;
-            z-index: 200;
-            display: none; /* Hidden by default */
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-            padding: 20px;
+        
+        #toast { 
+            background: #333; padding: 15px; border: 1px solid #555; 
+            border-radius: 8px; display: none; pointer-events: auto;
         }
 
-        /* Show only when screen is vertical */
-        @media (orientation: portrait) {
-            #orientation-overlay {
-                display: flex;
-            }
-        }
-
-        .phone-icon {
-            width: 50px;
-            height: 80px;
-            border: 3px solid #eee;
-            border-radius: 6px;
-            margin-bottom: 20px;
-            animation: rotate 2s ease-in-out infinite;
-        }
-
-        @keyframes rotate {
-            0% { transform: rotate(0deg); }
-            50% { transform: rotate(90deg); }
-            100% { transform: rotate(0deg); }
-        }
-        /* Spectator Count Bubble */
         #visitor-stats {
-            position: absolute;
-            bottom: 10px;
-            right: 15px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 11px;
-            color: #888;
-            z-index: 10;
+            position: absolute; bottom: 10px; right: 15px;
+            display: flex; align-items: center; gap: 5px; font-size: 10px; color: #666;
         }
-
-        .live-dot {
-            width: 6px;
-            height: 6px;
-            background: #ff4444; /* Red for 'Live' */
-            border-radius: 50%;
-            box-shadow: 0 0 5px #ff4444;
-            animation: pulse 2s infinite;
-        }
-
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.4; }
-            100% { opacity: 1; }
-        }
+        .live-dot { width: 6px; height: 6px; background: #ff4444; border-radius: 50%; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
     </style>
 </head>
 <body>
+
     <div id="orientation-overlay">
-        <div class="phone-icon"></div>
-        <p>Please rotate your device to landscape mode for the best experience.</p>
+        <p>🔄 Please rotate to Landscape</p>
     </div>
+
     <div id="loading-overlay">
         <div class="spinner"></div>
-        <div id="loading-text">Waking up server...</div>
+        <div>Waking up server...</div>
+    </div>
+
+    <div id="win-overlay" style="display: none; z-index: 150;">
+        <h1 id="win-message">P1 WINS!</h1>
+        <button class="btn" onclick="socket.emit('request_rematch')">REMATCH</button>
+        <button class="btn" onclick="location.reload()" style="margin-top: 10px; background: #444; color: white;">QUIT</button>
     </div>
 
     <div id="game-container">
         <div class="scoreboard">
-            <span id="score-p1">0</span>
-            <span class="score-divider">:</span>
-            <span id="score-p2">0</span>
+            <span id="score-p1">0</span><span style="margin: 0 15px;">:</span><span id="score-p2">0</span>
         </div>
 
         <canvas id="pongCanvas" width="800" height="400"></canvas>
         
         <div id="ui-layer">
-            <div style="text-align: center;"><span id="status-text" class="status">Connecting...</span></div>
-            <div id="challenge-area" class="interactive">
-                <button class="btn" onclick="sendChallenge()">CHALLENGE PLAYER</button>
+            <div style="text-align: center;">
+                <span id="status-text" class="status">Connecting...</span>
+                <div id="toast" style="margin-top: 10px;">
+                    <p style="margin: 0 0 10px 0;">New Challenger!</p>
+                    <button class="btn" onclick="acceptChallenge()" style="background: var(--accent); color: white;">ACCEPT</button>
+                </div>
+            </div>
+            
+            <div id="challenge-area" style="text-align: center; display: none;">
+                <button class="btn" onclick="sendChallenge()">CHALLENGE HOST</button>
             </div>
         </div>
-        <div id="win-overlay" style="display: none; position: absolute; inset: 0; background: rgba(0,0,0,0.9); z-index: 150; flex-direction: column; align-items: center; justify-content: center; text-align: center;">
-            <h1 id="win-message" style="font-size: 40px; margin-bottom: 10px; color: var(--accent);">PLAYER 1 WINS!</h1>
-            <div id="rematch-area" class="interactive">
-                <button class="btn btn-green" onclick="requestRematch()">REMATCH</button>
-                <button class="btn" onclick="location.reload()" style="margin-left: 10px;">QUIT</button>
-            </div>
-        </div>
+
         <div id="visitor-stats">
             <div class="live-dot"></div>
             <span id="visitor-text">1 VISITOR</span>
@@ -164,79 +125,121 @@
         const socket = io();
         const canvas = document.getElementById('pongCanvas');
         const ctx = canvas.getContext('2d');
-        const loadingOverlay = document.getElementById('loading-overlay');
+        
+        // UI Elements
         const statusText = document.getElementById('status-text');
         const challengeArea = document.getElementById('challenge-area');
+        const toast = document.getElementById('toast');
+        const winOverlay = document.getElementById('win-overlay');
 
-        // State
-        let myRole = null; let isPVP = false;
+        // Game State
+        let myRole = null; let isPVP = false; let gameActive = true;
+        let challengerSocketId = null;
         let ball = { x: 400, y: 200, dx: 4, dy: 4 };
         let playerY = 160; let opponentY = 160;
         let scoreP1 = 0; let scoreP2 = 0;
 
-        // --- Input Handling (Mouse + Touch) ---
+        // Input Logic
         function handleInput(y) {
+            if (!gameActive) return;
             const rect = canvas.getBoundingClientRect();
-            const scaleY = canvas.height / rect.height;
-            const targetY = (y - rect.top) * scaleY;
+            const scaleY = 400 / rect.height;
+            const targetY = (y - rect.top) * scaleY - 40;
             
-            // Limit movement to paddle center
-            if (myRole === 'HOST' || myRole === 'CHALLENGER') {
-                if (myRole === 'HOST') playerY = targetY - 40;
-                else socket.emit('p2_move', targetY - 40);
-            }
+            if (myRole === 'HOST') playerY = targetY;
+            else if (myRole === 'CHALLENGER') socket.emit('p2_move', targetY);
         }
 
         canvas.addEventListener('mousemove', (e) => handleInput(e.clientY));
-        
         canvas.addEventListener('touchmove', (e) => {
-            e.preventDefault(); // Stop scrolling
+            e.preventDefault();
             handleInput(e.touches[0].clientY);
         }, { passive: false });
 
-        document.addEventListener('touchstart', (e) => {
-            if (e.touches.length > 1) e.preventDefault();
-        }, { passive: false });
-
-        let lastTouchEnd = 0;
-        document.addEventListener('touchend', (e) => {
-            const now = (new Date()).getTime();
-            if (now - lastTouchEnd <= 300) e.preventDefault();
-            lastTouchEnd = now;
-        }, false);
-
-        // --- Connection & Events ---
+        // Socket Logic
         socket.on('connect', () => {
-            loadingOverlay.style.opacity = '0';
-            setTimeout(() => loadingOverlay.style.display = 'none', 500);
+            document.getElementById('loading-overlay').style.display = 'none';
         });
 
         socket.on('role', (role) => {
             myRole = role;
-            statusText.innerText = role === 'HOST' ? 'You are Host' : 'Spectating';
-            if (role === 'SPECTATOR') challengeArea.style.display = 'block';
+            updateUI();
+        });
+
+        socket.on('visitor_count', (count) => {
+            document.getElementById('visitor-text').innerText = count === 1 ? "1 VISITOR" : `${count} VISITORS`;
+        });
+
+        socket.on('challenge_received', (id) => {
+            if (myRole === 'HOST') {
+                challengerSocketId = id;
+                toast.style.display = 'block';
+            }
+        });
+
+        socket.on('challenge_pending', () => {
+            statusText.innerText = "Challenge Sent...";
+            challengeArea.style.display = 'none';
+        });
+
+        socket.on('game_mode_change', (data) => {
+            isPVP = true; gameActive = true;
+            if (data.challengerId === socket.id) myRole = 'CHALLENGER';
+            winOverlay.style.display = 'none';
+            toast.style.display = 'none';
+            updateUI();
         });
 
         socket.on('spectator_update', (state) => {
             if (myRole !== 'HOST') {
-                ball = state.ball;
-                playerY = state.playerY;
-                opponentY = state.opponentY;
-                document.getElementById('score-p1').innerText = state.scoreP1;
-                document.getElementById('score-p2').innerText = state.scoreP2;
+                ball = state.ball; playerY = state.playerY; opponentY = state.opponentY;
+                scoreP1 = state.scoreP1; scoreP2 = state.scoreP2;
+                updateScoreboard();
             }
         });
 
-        socket.on('game_mode_change', (data) => {
-            isPVP = true;
-            if (data.challengerId === socket.id) myRole = 'CHALLENGER';
-            challengeArea.style.display = 'none';
-            statusText.innerText = isPVP ? 'PVP MATCH' : statusText.innerText;
+        socket.on('p2_update', (y) => { if (myRole === 'HOST') opponentY = y; });
+
+        socket.on('game_over', (data) => {
+            gameActive = false;
+            winOverlay.style.display = 'flex';
+            document.getElementById('win-message').innerText = data.winner === 'P1' ? 'LEFT WINS!' : 'RIGHT WINS!';
         });
 
-        // --- Game Logic (Host Only) ---
+        socket.on('rematch_started', () => {
+            scoreP1 = 0; scoreP2 = 0; gameActive = true;
+            winOverlay.style.display = 'none';
+            updateScoreboard();
+        });
+
+        socket.on('reset_game', () => location.reload());
+        socket.on('challenger_left', () => { isPVP = false; updateUI(); });
+
+        // Helper Functions
+        function updateUI() {
+            if (myRole === 'HOST') statusText.innerText = isPVP ? "PVP Match" : "Playing AI";
+            else if (myRole === 'CHALLENGER') statusText.innerText = "Challenger (Right)";
+            else {
+                statusText.innerText = "Spectating";
+                challengeArea.style.display = isPVP ? 'none' : 'block';
+            }
+        }
+
+        function updateScoreboard() {
+            document.getElementById('score-p1').innerText = scoreP1;
+            document.getElementById('score-p2').innerText = scoreP2;
+        }
+
+        function sendChallenge() { socket.emit('challenge_request'); }
+        function acceptChallenge() { socket.emit('accept_challenge', challengerSocketId); }
+
+        function resetBall() {
+            ball = { x: 400, y: 200, dx: 4 * (Math.random() > 0.5 ? 1 : -1), dy: 4 };
+        }
+
+        // Host Loop
         function update() {
-            if (myRole !== 'HOST') return;
+            if (myRole !== 'HOST' || !gameActive) return;
 
             if (!isPVP) { // AI
                 opponentY += (ball.y - 40 - opponentY) * 0.1;
@@ -245,111 +248,24 @@
             ball.x += ball.dx; ball.y += ball.dy;
             if (ball.y < 0 || ball.y > 400) ball.dy *= -1;
 
-            // Collisions
             if (ball.x < 12 && ball.y > playerY && ball.y < playerY + 80) ball.dx = Math.abs(ball.dx) * 1.05;
             if (ball.x > 788 && ball.y > opponentY && ball.y < opponentY + 80) ball.dx = -Math.abs(ball.dx) * 1.05;
 
-            // Scoring
-            if (ball.x < 0) { scoreP2++; resetBall(); }
-            if (ball.x > 800) { scoreP1++; resetBall(); }
+            if (ball.x < 0) { scoreP2++; scoreP2 >= 5 ? socket.emit('match_finished', {winner:'P2'}) : resetBall(); updateScoreboard(); }
+            if (ball.x > 800) { scoreP1++; scoreP1 >= 5 ? socket.emit('match_finished', {winner:'P1'}) : resetBall(); updateScoreboard(); }
 
             socket.emit('host_update', { ball, playerY, opponentY, scoreP1, scoreP2 });
         }
 
-        function resetBall() {
-            ball = { x: 400, y: 200, dx: 4 * (Math.random() > 0.5 ? 1 : -1), dy: 4 };
-            document.getElementById('score-p1').innerText = scoreP1;
-            document.getElementById('score-p2').innerText = scoreP2;
-        }
-
         function draw() {
             ctx.clearRect(0, 0, 800, 400);
-            ctx.fillStyle = '#fff';
-            // Left Paddle
+            ctx.fillStyle = '#eee';
             ctx.fillRect(0, playerY, 12, 80);
-            // Right Paddle
             ctx.fillRect(788, opponentY, 12, 80);
-            // Center Line
-            ctx.setLineDash([5, 15]);
-            ctx.beginPath(); ctx.moveTo(400,0); ctx.lineTo(400,400); ctx.strokeStyle = '#333'; ctx.stroke();
-            // Ball
             ctx.beginPath(); ctx.arc(ball.x, ball.y, 8, 0, Math.PI*2); ctx.fill();
-            requestAnimationFrame(() => { update(); draw(); });
+            update();
+            requestAnimationFrame(draw);
         }
-
-        function sendChallenge() { socket.emit('challenge_request'); }
-
-        // Add this new listener
-        socket.on('challenge_pending', () => {
-            statusText.innerText = "Waiting for Host...";
-            challengeArea.style.display = 'none';
-        });
-
-        // Update the acceptChallenge function
-        function acceptChallenge() {
-            if (challengerSocketId) {
-                socket.emit('accept_challenge', challengerSocketId);
-                toast.style.display = 'none'; // Hide the toast immediately
-            }
-        }
-
-        // Ensure the challenge_received listener captures the ID
-        socket.on('challenge_received', (id) => {
-            challengerSocketId = id; // This was likely the culprit!
-            toast.style.display = 'block'; 
-        });
-
-        // New State variable
-        let gameActive = true;
-
-        // 1. Listen for Game Over
-        socket.on('game_over', (data) => {
-            gameActive = false;
-            document.getElementById('win-overlay').style.display = 'flex';
-            document.getElementById('win-message').innerText = data.winner === 'P1' ? 'LEFT SIDE WINS!' : 'RIGHT SIDE WINS!';
-            document.getElementById('win-message').style.color = (data.winner === 'P1' && myRole === 'HOST') || (data.winner === 'P2' && myRole === 'CHALLENGER') ? '#4CAF50' : '#ff4444';
-        });
-
-        // 2. Modify handleScore in the Host Logic
-        function handleScore() {
-            updateScoreboard();
-            
-            if (scoreP1 >= WIN_SCORE || scoreP2 >= WIN_SCORE) {
-                const winner = scoreP1 >= WIN_SCORE ? 'P1' : 'P2';
-                socket.emit('match_finished', { winner });
-                gameActive = false; // Stop physics
-            } else {
-                resetBall();
-            }
-        }
-
-        // 3. Update the update() and draw() loops to respect gameActive
-        function gameLoop() {
-            if (gameActive) {
-                update();
-            }
-            draw();
-            requestAnimationFrame(gameLoop);
-        }
-
-        // 4. Rematch Logic
-        function requestRematch() {
-            socket.emit('request_rematch');
-        }
-
-        socket.on('rematch_started', () => {
-            scoreP1 = 0;
-            scoreP2 = 0;
-            updateScoreboard();
-            gameActive = true;
-            document.getElementById('win-overlay').style.display = 'none';
-            if (myRole === 'HOST') resetBall();
-        });
-
-        socket.on('visitor_count', (count) => {
-            const text = count === 1 ? "1 VISITOR" : `${count} VISITORS`;
-            document.getElementById('visitor-text').innerText = text;
-        });
 
         draw();
     </script>
