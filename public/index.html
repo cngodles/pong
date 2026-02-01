@@ -92,6 +92,33 @@
             50% { transform: rotate(90deg); }
             100% { transform: rotate(0deg); }
         }
+        /* Spectator Count Bubble */
+        #visitor-stats {
+            position: absolute;
+            bottom: 10px;
+            right: 15px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            color: #888;
+            z-index: 10;
+        }
+
+        .live-dot {
+            width: 6px;
+            height: 6px;
+            background: #ff4444; /* Red for 'Live' */
+            border-radius: 50%;
+            box-shadow: 0 0 5px #ff4444;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.4; }
+            100% { opacity: 1; }
+        }
     </style>
 </head>
 <body>
@@ -118,6 +145,17 @@
             <div id="challenge-area" class="interactive">
                 <button class="btn" onclick="sendChallenge()">CHALLENGE PLAYER</button>
             </div>
+        </div>
+        <div id="win-overlay" style="display: none; position: absolute; inset: 0; background: rgba(0,0,0,0.9); z-index: 150; flex-direction: column; align-items: center; justify-content: center; text-align: center;">
+            <h1 id="win-message" style="font-size: 40px; margin-bottom: 10px; color: var(--accent);">PLAYER 1 WINS!</h1>
+            <div id="rematch-area" class="interactive">
+                <button class="btn btn-green" onclick="requestRematch()">REMATCH</button>
+                <button class="btn" onclick="location.reload()" style="margin-left: 10px;">QUIT</button>
+            </div>
+        </div>
+        <div id="visitor-stats">
+            <div class="live-dot"></div>
+            <span id="visitor-text">1 VISITOR</span>
         </div>
     </div>
 
@@ -155,6 +193,17 @@
             e.preventDefault(); // Stop scrolling
             handleInput(e.touches[0].clientY);
         }, { passive: false });
+
+        document.addEventListener('touchstart', (e) => {
+            if (e.touches.length > 1) e.preventDefault();
+        }, { passive: false });
+
+        let lastTouchEnd = 0;
+        document.addEventListener('touchend', (e) => {
+            const now = (new Date()).getTime();
+            if (now - lastTouchEnd <= 300) e.preventDefault();
+            lastTouchEnd = now;
+        }, false);
 
         // --- Connection & Events ---
         socket.on('connect', () => {
@@ -229,6 +278,78 @@
         }
 
         function sendChallenge() { socket.emit('challenge_request'); }
+
+        // Add this new listener
+        socket.on('challenge_pending', () => {
+            statusText.innerText = "Waiting for Host...";
+            challengeArea.style.display = 'none';
+        });
+
+        // Update the acceptChallenge function
+        function acceptChallenge() {
+            if (challengerSocketId) {
+                socket.emit('accept_challenge', challengerSocketId);
+                toast.style.display = 'none'; // Hide the toast immediately
+            }
+        }
+
+        // Ensure the challenge_received listener captures the ID
+        socket.on('challenge_received', (id) => {
+            challengerSocketId = id; // This was likely the culprit!
+            toast.style.display = 'block'; 
+        });
+
+        // New State variable
+        let gameActive = true;
+
+        // 1. Listen for Game Over
+        socket.on('game_over', (data) => {
+            gameActive = false;
+            document.getElementById('win-overlay').style.display = 'flex';
+            document.getElementById('win-message').innerText = data.winner === 'P1' ? 'LEFT SIDE WINS!' : 'RIGHT SIDE WINS!';
+            document.getElementById('win-message').style.color = (data.winner === 'P1' && myRole === 'HOST') || (data.winner === 'P2' && myRole === 'CHALLENGER') ? '#4CAF50' : '#ff4444';
+        });
+
+        // 2. Modify handleScore in the Host Logic
+        function handleScore() {
+            updateScoreboard();
+            
+            if (scoreP1 >= WIN_SCORE || scoreP2 >= WIN_SCORE) {
+                const winner = scoreP1 >= WIN_SCORE ? 'P1' : 'P2';
+                socket.emit('match_finished', { winner });
+                gameActive = false; // Stop physics
+            } else {
+                resetBall();
+            }
+        }
+
+        // 3. Update the update() and draw() loops to respect gameActive
+        function gameLoop() {
+            if (gameActive) {
+                update();
+            }
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // 4. Rematch Logic
+        function requestRematch() {
+            socket.emit('request_rematch');
+        }
+
+        socket.on('rematch_started', () => {
+            scoreP1 = 0;
+            scoreP2 = 0;
+            updateScoreboard();
+            gameActive = true;
+            document.getElementById('win-overlay').style.display = 'none';
+            if (myRole === 'HOST') resetBall();
+        });
+
+        socket.on('visitor_count', (count) => {
+            const text = count === 1 ? "1 VISITOR" : `${count} VISITORS`;
+            document.getElementById('visitor-text').innerText = text;
+        });
 
         draw();
     </script>
