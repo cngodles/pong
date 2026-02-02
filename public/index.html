@@ -53,7 +53,7 @@
 
         /* Scoreboard */
         .scoreboard {
-            position: absolute; top: 10%; width: 100%;
+            position: absolute; top: 18%; width: 100%;
             display: flex; justify-content: center;
             font-size: clamp(24px, 6vw, 60px); font-weight: bold;
             color: rgba(255, 255, 255, 0.15); pointer-events: none;
@@ -74,20 +74,25 @@
             opacity: 0.5;
             cursor: not-allowed;
         }
-        #stats-panel {
-            background: rgba(0, 0, 0, 0.7);
-            border: 1px solid #333;
-            border-radius: 6px;
-            padding: 8px 10px;
-            font-size: 10px;
-            color: #bbb;
-            max-width: 260px;
-            margin-top: 10px;
+        #stats-modal {
+            position: absolute; inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: none; align-items: center; justify-content: center;
+            z-index: 180;
         }
-        #stats-panel .title { color: #eee; font-weight: bold; margin-bottom: 6px; }
-        #stats-panel .row { display: flex; justify-content: space-between; gap: 8px; }
-        #stats-panel .row + .row { margin-top: 4px; }
-        #stats-panel .name { color: #eee; }
+        #stats-card {
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 10px;
+            padding: 16px 18px;
+            width: min(92vw, 360px);
+            color: #ddd;
+        }
+        #stats-card .title { color: #fff; font-weight: bold; margin-bottom: 10px; }
+        #stats-card .row { display: flex; justify-content: space-between; gap: 10px; }
+        #stats-card .row + .row { margin-top: 8px; }
+        #stats-card .name { color: #fff; }
+        #stats-card .close-row { margin-top: 12px; display: flex; justify-content: center; }
         
         #toast { 
             background: #333; padding: 15px; border: 1px solid #555; 
@@ -132,36 +137,43 @@
         <canvas id="pongCanvas" width="800" height="400"></canvas>
         
         <div id="ui-layer">
-            <div style="text-align: center;">
+            <div style="text-align: center; margin-top: 6px;">
                 <span id="status-text" class="status">Connecting...</span>
                 <div style="margin-top: 8px;">
                     <span id="name-text" class="status">Anon</span>
                     <span id="queue-text" class="status" style="margin-left: 6px;">Queue: 0</span>
-                </div>
-                <div id="stats-panel">
-                    <div class="title">Match Stats</div>
-                    <div class="row">
-                        <span class="name" id="stats-you-name">You</span>
-                        <span id="stats-you-record">0W / 0L (0)</span>
-                    </div>
-                    <div class="row">
-                        <span class="name" id="stats-opp-name">Opponent</span>
-                        <span id="stats-opp-record">0W / 0L (0)</span>
-                    </div>
                 </div>
             </div>
             
         <div id="spectator-controls" style="text-align: center;">
             <button class="btn" onclick="toggleQueue()" id="queue-btn" style="background: var(--accent); color: white;">JOIN QUEUE</button>
             <button class="btn" onclick="confirmReset()" style="margin-left: 8px; background: #555; color: white;">RESET</button>
+            <button class="btn" onclick="openStats()" id="stats-btn" style="margin-left: 8px; background: #333; color: white;">STATS</button>
             <button class="btn" onclick="setSpectatorMode('ai')" style="margin-left: 8px; background: #444; color: white;">PLAY AI</button>
         </div>
         </div>
 
-        <div id="visitor-stats">
-            <div class="live-dot"></div>
-            <span id="visitor-text">1 VISITOR</span>
+    <div id="visitor-stats">
+        <div class="live-dot"></div>
+        <span id="visitor-text">1 VISITOR</span>
+    </div>
+
+    <div id="stats-modal">
+        <div id="stats-card">
+            <div class="title">Match Stats</div>
+            <div class="row">
+                <span class="name" id="stats-you-name">You</span>
+                <span id="stats-you-record">0W / 0L (0)</span>
+            </div>
+            <div class="row">
+                <span class="name" id="stats-opp-name">Opponent</span>
+                <span id="stats-opp-record">0W / 0L (0)</span>
+            </div>
+            <div class="close-row">
+                <button class="btn" onclick="closeStats()">CLOSE</button>
+            </div>
         </div>
+    </div>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
@@ -181,6 +193,8 @@
         const countdownNumber = document.getElementById('countdown-number');
         const countdownHost = document.getElementById('countdown-host');
         const countdownChallenger = document.getElementById('countdown-challenger');
+        const statsModal = document.getElementById('stats-modal');
+        const statsBtn = document.getElementById('stats-btn');
         const statsYouName = document.getElementById('stats-you-name');
         const statsYouRecord = document.getElementById('stats-you-record');
         const statsOppName = document.getElementById('stats-opp-name');
@@ -289,6 +303,7 @@
             else if (myRole === 'CHALLENGER') currentOpponentName = lastMatchNames.hostName;
             updateStatsUI();
             winOverlay.style.display = 'none';
+            closeStats();
             updateUI();
         });
 
@@ -301,6 +316,7 @@
             else if (myRole === 'CHALLENGER') currentOpponentName = data.hostName;
             updateStatsUI();
             showCountdown(data.seconds, data.hostName, data.challengerName);
+            closeStats();
             updateUI();
         });
 
@@ -325,6 +341,7 @@
         socket.on('game_over', (data) => {
             if (localPractice) return;
             gameActive = false;
+            isPVP = false;
             winOverlay.style.display = 'flex';
             const winnerName = data.winner === 'P1' ? lastMatchNames.hostName : lastMatchNames.challengerName;
             document.getElementById('win-message').innerText = `${winnerName} WINS!`;
@@ -361,6 +378,7 @@
             if (localPractice) resetLocalMatch();
             winOverlay.style.display = 'none';
             countdownOverlay.style.display = 'none';
+            closeStats();
             updateUI();
         });
         socket.on('challenger_left', () => { isPVP = false; gameActive = false; updateUI(); });
@@ -384,6 +402,11 @@
                 queueBtn.disabled = !canQueue;
                 queueBtn.innerText = queueInfo.inQueue ? 'LEAVE QUEUE' : 'JOIN QUEUE';
                 if (!canQueue) queueBtn.innerText = 'IN MATCH';
+            }
+            if (statsBtn) {
+                const countdownVisible = countdownOverlay.style.display === 'flex';
+                const canOpenStats = !localPractice && !gameActive && !countdownVisible;
+                statsBtn.disabled = !canOpenStats;
             }
         }
 
@@ -432,6 +455,16 @@
         function confirmReset() {
             const ok = confirm("Reset and leave the queue? This clears your stats.");
             if (ok) resetToStart();
+        }
+
+        function openStats() {
+            const countdownVisible = countdownOverlay.style.display === 'flex';
+            if (localPractice || gameActive || countdownVisible) return;
+            statsModal.style.display = 'flex';
+        }
+
+        function closeStats() {
+            statsModal.style.display = 'none';
         }
 
         function toggleQueue() {
