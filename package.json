@@ -5,6 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
+    "tunnel": "cloudflared tunnel --url http://localhost:3000",
+    "dev:tunnel": "start \"\" /b npm run start && npm run tunnel",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
