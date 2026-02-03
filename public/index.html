@@ -5,29 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Hero Pong Live</title>
     <style>
+        * { box-sizing: border-box; }
         :root { --accent: #4CAF50; }
         body { 
             margin: 0; background: #111; color: #eee; 
             font-family: 'Courier New', Courier, monospace;
             display: flex; flex-direction: column; align-items: center; 
             justify-content: center; height: 100vh; width: 100vw;
+            height: 100dvh; width: 100dvw;
+            padding: env(safe-area-inset-top) env(safe-area-inset-right)
+                     env(safe-area-inset-bottom) env(safe-area-inset-left);
             overflow: hidden; touch-action: none; 
         }
         
         #game-container { 
             position: relative; 
-            width: 95vw; 
-            max-width: 800px;
-            max-height: 90vh; /* Prevents overflow in landscape */
-            aspect-ratio: 2 / 1; 
+            width: 100%;
+            height: 100%;
+            max-width: none;
+            max-height: none;
             border: 2px solid #333;
             background: #222;
+            touch-action: none;
         }
         
         canvas { width: 100%; height: 100%; display: block; }
 
         /* Overlays */
-        #loading-overlay, #win-overlay, #orientation-overlay {
+        #loading-overlay, #win-overlay, #orientation-overlay, #countdown-overlay {
             position: absolute; inset: 0; background: #111;
             display: flex; flex-direction: column; align-items: center;
             justify-content: center; z-index: 100; text-align: center;
@@ -35,6 +40,9 @@
 
         #orientation-overlay { display: none; z-index: 200; }
         @media (orientation: portrait) { #orientation-overlay { display: flex; } }
+        #countdown-overlay { display: none; z-index: 160; }
+        #countdown-number { font-size: clamp(48px, 12vw, 120px); font-weight: bold; margin-top: 8px; }
+        .current-player { font-weight: bold; text-decoration: underline; }
 
         .spinner {
             width: 40px; height: 40px; border: 4px solid #333;
@@ -45,23 +53,46 @@
 
         /* Scoreboard */
         .scoreboard {
-            position: absolute; top: 10%; width: 100%;
+            position: absolute; top: 18%; width: 100%;
             display: flex; justify-content: center;
             font-size: clamp(24px, 6vw, 60px); font-weight: bold;
             color: rgba(255, 255, 255, 0.15); pointer-events: none;
         }
 
         #ui-layer {
-            position: absolute; inset: 0; pointer-events: none;
+            position: absolute; inset: 0; pointer-events: auto;
             display: flex; flex-direction: column; justify-content: space-between; padding: 15px;
         }
-        .status { background: rgba(0, 0, 0, 0.8); padding: 5px 12px; border-radius: 4px; font-size: 10px; }
+        .status { background: rgba(0, 0, 0, 0.8); padding: 5px 12px; border-radius: 4px; font-size: 10px; pointer-events: none; }
         
         .btn {
             background: #fff; border: none; padding: 12px 20px; 
             font-weight: bold; cursor: pointer; border-radius: 4px; font-family: inherit;
             pointer-events: auto;
         }
+        .btn[disabled] {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        #stats-modal {
+            position: absolute; inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: none; align-items: center; justify-content: center;
+            z-index: 180;
+        }
+        #stats-card {
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 10px;
+            padding: 16px 18px;
+            width: min(92vw, 360px);
+            color: #ddd;
+        }
+        #stats-card .title { color: #fff; font-weight: bold; margin-bottom: 10px; }
+        #stats-card .row { display: flex; justify-content: space-between; gap: 10px; }
+        #stats-card .row + .row { margin-top: 8px; }
+        #stats-card .name { color: #fff; }
+        #stats-card .close-row { margin-top: 12px; display: flex; justify-content: center; }
         
         #toast { 
             background: #333; padding: 15px; border: 1px solid #555; 
@@ -89,8 +120,13 @@
 
     <div id="win-overlay" style="display: none; z-index: 150;">
         <h1 id="win-message">P1 WINS!</h1>
-        <button class="btn" onclick="socket.emit('request_rematch')">REMATCH</button>
-        <button class="btn" onclick="location.reload()" style="margin-top: 10px; background: #444; color: white;">QUIT</button>
+    </div>
+
+    <div id="countdown-overlay">
+        <div id="countdown-match" style="opacity: 0.7;">
+            <span id="countdown-host">Player</span> vs <span id="countdown-challenger">Player</span>
+        </div>
+        <div id="countdown-number">5</div>
     </div>
 
     <div id="game-container">
@@ -101,57 +137,128 @@
         <canvas id="pongCanvas" width="800" height="400"></canvas>
         
         <div id="ui-layer">
-            <div style="text-align: center;">
+            <div style="text-align: center; margin-top: 6px;">
                 <span id="status-text" class="status">Connecting...</span>
-                <div id="toast" style="margin-top: 10px;">
-                    <p style="margin: 0 0 10px 0;">New Challenger!</p>
-                    <button class="btn" onclick="acceptChallenge()" style="background: var(--accent); color: white;">ACCEPT</button>
+                <div style="margin-top: 8px;">
+                    <span id="name-text" class="status">Anon</span>
+                    <span id="queue-text" class="status" style="margin-left: 6px;">Queue: 0</span>
                 </div>
             </div>
             
-            <div id="challenge-area" style="text-align: center; display: none;">
-                <button class="btn" onclick="sendChallenge()">CHALLENGE HOST</button>
-            </div>
+        <div id="spectator-controls" style="text-align: center;">
+            <button class="btn" onclick="toggleQueue()" id="queue-btn" style="background: var(--accent); color: white;">JOIN QUEUE</button>
+            <button class="btn" onclick="confirmReset()" style="margin-left: 8px; background: #555; color: white;">RESET</button>
+            <button class="btn" onclick="openStats()" id="stats-btn" style="margin-left: 8px; background: #333; color: white;">STATS</button>
+            <button class="btn" onclick="setSpectatorMode('ai')" style="margin-left: 8px; background: #444; color: white;">PLAY AI</button>
+        </div>
         </div>
 
-        <div id="visitor-stats">
-            <div class="live-dot"></div>
-            <span id="visitor-text">1 VISITOR</span>
+    <div id="visitor-stats">
+        <div class="live-dot"></div>
+        <span id="visitor-text">1 VISITOR</span>
+    </div>
+
+    <div id="stats-modal">
+        <div id="stats-card">
+            <div class="title">Match Stats</div>
+            <div class="row">
+                <span class="name" id="stats-you-name">You</span>
+                <span id="stats-you-record">0W / 0L (0)</span>
+            </div>
+            <div class="row">
+                <span class="name" id="stats-opp-name">Opponent</span>
+                <span id="stats-opp-record">0W / 0L (0)</span>
+            </div>
+            <div class="close-row">
+                <button class="btn" onclick="closeStats()">CLOSE</button>
+            </div>
         </div>
+    </div>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
-        const socket = io();
+        const socket = (window.socket = io());
+        const gameContainer = document.getElementById('game-container');
         const canvas = document.getElementById('pongCanvas');
         const ctx = canvas.getContext('2d');
         
         // UI Elements
         const statusText = document.getElementById('status-text');
-        const challengeArea = document.getElementById('challenge-area');
-        const toast = document.getElementById('toast');
+        const nameText = document.getElementById('name-text');
+        const queueText = document.getElementById('queue-text');
+        const spectatorControls = document.getElementById('spectator-controls');
         const winOverlay = document.getElementById('win-overlay');
+        const countdownOverlay = document.getElementById('countdown-overlay');
+        const countdownNumber = document.getElementById('countdown-number');
+        const countdownHost = document.getElementById('countdown-host');
+        const countdownChallenger = document.getElementById('countdown-challenger');
+        const statsModal = document.getElementById('stats-modal');
+        const statsBtn = document.getElementById('stats-btn');
+        const statsYouName = document.getElementById('stats-you-name');
+        const statsYouRecord = document.getElementById('stats-you-record');
+        const statsOppName = document.getElementById('stats-opp-name');
+        const statsOppRecord = document.getElementById('stats-opp-record');
 
         // Game State
         let myRole = null; let isPVP = false; let gameActive = true;
+        let localPractice = false; let spectatorMode = 'watch';
+        let latestSpectatorState = null;
         let challengerSocketId = null;
-        let ball = { x: 400, y: 200, dx: 4, dy: 4 };
-        let playerY = 160; let opponentY = 160;
+        let myName = "Anon";
+        let queueInfo = { total: 0, ahead: 0, inQueue: false };
+        let statusTimeout = null;
+        let localCountdownTimer = null;
+        let lastMatchNames = { hostName: "Player", challengerName: "Player" };
+        let myStats = { wins: 0, losses: 0, matches: 0 };
+        let oppStats = { wins: 0, losses: 0, matches: 0 };
+        let currentOpponentName = "Opponent";
+        let aiState = { fatigue: 0, error: 0, hold: 0 };
+        let aiLeftState = { fatigue: 0, error: 0, hold: 0 };
+        const AI_BASE_MAX_STEP = 4.6;
+        const AI_FATIGUE_RATE_UP = 0.0009;
+        const AI_FATIGUE_RATE_DOWN = 0.0012;
+        const AI_ERROR_JITTER_BASE = 24;
+        const AI_ERROR_JITTER_FATIGUE = 80;
+        const AI_MISTAKE_CHANCE_BASE = 0.006;
+        const AI_MISTAKE_CHANCE_FATIGUE = 0.02;
+        const BASE_W = 800;
+        const BASE_H = 400;
+        const PADDLE_W = 12;
+        const PADDLE_H = 80;
+        const BALL_R = 8;
+        const BALL_SPEED = 4;
+        let ball = { x: BASE_W / 2, y: BASE_H / 2, dx: BALL_SPEED, dy: BALL_SPEED };
+        let playerY = (BASE_H - PADDLE_H) / 2; let opponentY = (BASE_H - PADDLE_H) / 2;
         let scoreP1 = 0; let scoreP2 = 0;
+        let scaleX = 1; let scaleY = 1;
+
+        function resizeCanvas() {
+            const rect = canvas.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = Math.max(1, Math.round(rect.width * dpr));
+            canvas.height = Math.max(1, Math.round(rect.height * dpr));
+            scaleX = canvas.width / BASE_W;
+            scaleY = canvas.height / BASE_H;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('orientationchange', resizeCanvas);
+        resizeCanvas();
+        updateStatsUI();
 
         // Input Logic
         function handleInput(y) {
             if (!gameActive) return;
-            const rect = canvas.getBoundingClientRect();
-            const scaleY = 400 / rect.height;
-            const targetY = (y - rect.top) * scaleY - 40;
+            const rect = gameContainer.getBoundingClientRect();
+            const toBaseY = BASE_H / rect.height;
+            const targetY = (y - rect.top) * toBaseY - (PADDLE_H / 2);
             
-            if (myRole === 'HOST') playerY = targetY;
+            if (myRole === 'HOST' || localPractice) playerY = targetY;
             else if (myRole === 'CHALLENGER') socket.emit('p2_move', targetY);
         }
 
-        canvas.addEventListener('mousemove', (e) => handleInput(e.clientY));
-        canvas.addEventListener('touchmove', (e) => {
+        gameContainer.addEventListener('mousemove', (e) => handleInput(e.clientY));
+        gameContainer.addEventListener('touchmove', (e) => {
             e.preventDefault();
             handleInput(e.touches[0].clientY);
         }, { passive: false });
@@ -159,10 +266,29 @@
         // Socket Logic
         socket.on('connect', () => {
             document.getElementById('loading-overlay').style.display = 'none';
+            socket.emit('request_name');
+        });
+
+        socket.on('anon_name', (data) => {
+            if (data && data.name) {
+                myName = data.name;
+                nameText.innerText = myName;
+                if (localPractice) {
+                    lastMatchNames = { hostName: myName, challengerName: "Computer" };
+                }
+                updateStatsUI();
+            }
         });
 
         socket.on('role', (role) => {
+            const prevRole = myRole;
             myRole = role;
+            if (myRole !== 'SPECTATOR') {
+                localPractice = false;
+                spectatorMode = 'watch';
+            } else if (prevRole !== 'SPECTATOR') {
+                setSpectatorMode('watch', true);
+            }
             updateUI();
         });
 
@@ -170,58 +296,117 @@
             document.getElementById('visitor-text').innerText = count === 1 ? "1 VISITOR" : `${count} VISITORS`;
         });
 
-        socket.on('challenge_received', (id) => {
-            if (myRole === 'HOST') {
-                challengerSocketId = id;
-                toast.style.display = 'block';
-            }
-        });
-
-        socket.on('challenge_pending', () => {
-            statusText.innerText = "Challenge Sent...";
-            challengeArea.style.display = 'none';
-        });
-
         socket.on('game_mode_change', (data) => {
-            isPVP = true; gameActive = true;
+            isPVP = true; gameActive = false;
             if (data.challengerId === socket.id) myRole = 'CHALLENGER';
+            if (myRole === 'HOST') currentOpponentName = lastMatchNames.challengerName;
+            else if (myRole === 'CHALLENGER') currentOpponentName = lastMatchNames.hostName;
+            updateStatsUI();
             winOverlay.style.display = 'none';
-            toast.style.display = 'none';
+            closeStats();
             updateUI();
+        });
+
+        socket.on('match_countdown', (data) => {
+            if (!data) return;
+            isPVP = true;
+            gameActive = false;
+            lastMatchNames = { hostName: data.hostName, challengerName: data.challengerName };
+            if (myRole === 'HOST') currentOpponentName = data.challengerName;
+            else if (myRole === 'CHALLENGER') currentOpponentName = data.hostName;
+            updateStatsUI();
+            showCountdown(data.seconds, data.hostName, data.challengerName);
+            closeStats();
+            updateUI();
+        });
+
+        socket.on('game_start', () => {
+            gameActive = true;
+            hideCountdown();
         });
 
         socket.on('spectator_update', (state) => {
             if (myRole !== 'HOST') {
-                ball = state.ball; playerY = state.playerY; opponentY = state.opponentY;
-                scoreP1 = state.scoreP1; scoreP2 = state.scoreP2;
-                updateScoreboard();
+                latestSpectatorState = state;
+            }
+            if (myRole !== 'HOST' && !localPractice) {
+            ball = state.ball; playerY = state.playerY; opponentY = state.opponentY;
+            scoreP1 = state.scoreP1; scoreP2 = state.scoreP2;
+            updateScoreboard();
             }
         });
 
         socket.on('p2_update', (y) => { if (myRole === 'HOST') opponentY = y; });
 
         socket.on('game_over', (data) => {
+            if (localPractice) return;
             gameActive = false;
+            isPVP = false;
             winOverlay.style.display = 'flex';
-            document.getElementById('win-message').innerText = data.winner === 'P1' ? 'LEFT WINS!' : 'RIGHT WINS!';
+            const winnerName = data.winner === 'P1' ? lastMatchNames.hostName : lastMatchNames.challengerName;
+            document.getElementById('win-message').innerText = `${winnerName} WINS!`;
+            if (myRole === 'HOST' || myRole === 'CHALLENGER') {
+                const didWin = (myRole === 'HOST' && data.winner === 'P1') ||
+                    (myRole === 'CHALLENGER' && data.winner === 'P2');
+                recordMatchResult(didWin);
+            }
+            setTimeout(() => {
+                winOverlay.style.display = 'none';
+                updateUI();
+            }, 1500);
+        });
+
+        socket.on('next_match_info', (data) => {
+            if (data && data.opponentName) {
+                flashStatus(`Up next vs ${data.opponentName}`);
+            }
         });
 
         socket.on('rematch_started', () => {
-            scoreP1 = 0; scoreP2 = 0; gameActive = true;
+            scoreP1 = 0; scoreP2 = 0; gameActive = false;
             winOverlay.style.display = 'none';
             updateScoreboard();
+            if (localPractice) {
+                lastMatchNames = { hostName: myName, challengerName: "Computer" };
+            }
+            startLocalCountdown(lastMatchNames.hostName, lastMatchNames.challengerName);
         });
 
-        socket.on('reset_game', () => location.reload());
-        socket.on('challenger_left', () => { isPVP = false; updateUI(); });
+        socket.on('reset_game', () => {
+            isPVP = false;
+            gameActive = false;
+            if (localPractice) resetLocalMatch();
+            winOverlay.style.display = 'none';
+            countdownOverlay.style.display = 'none';
+            closeStats();
+            updateUI();
+        });
+        socket.on('challenger_left', () => { isPVP = false; gameActive = false; updateUI(); });
+        socket.on('queue_status', (data) => {
+            if (!data) return;
+            queueInfo = data;
+            updateQueueUI();
+        });
 
         // Helper Functions
         function updateUI() {
-            if (myRole === 'HOST') statusText.innerText = isPVP ? "PVP Match" : "Playing AI";
+            if (myRole === 'HOST') statusText.innerText = isPVP ? "PVP Match" : "AI Demo";
             else if (myRole === 'CHALLENGER') statusText.innerText = "Challenger (Right)";
             else {
-                statusText.innerText = "Spectating";
-                challengeArea.style.display = isPVP ? 'none' : 'block';
+                statusText.innerText = localPractice ? "Playing AI (Local)" : "Spectating Live";
+            }
+            if (myRole === 'HOST' && !isPVP && !localPractice) gameActive = true;
+            const queueBtn = document.getElementById('queue-btn');
+            if (queueBtn) {
+                const canQueue = !localPractice && !isPVP;
+                queueBtn.disabled = !canQueue;
+                queueBtn.innerText = queueInfo.inQueue ? 'LEAVE QUEUE' : 'JOIN QUEUE';
+                if (!canQueue) queueBtn.innerText = 'IN MATCH';
+            }
+            if (statsBtn) {
+                const countdownVisible = countdownOverlay.style.display === 'flex';
+                const canOpenStats = !localPractice && !gameActive && !countdownVisible;
+                statsBtn.disabled = !canOpenStats;
             }
         }
 
@@ -230,39 +415,279 @@
             document.getElementById('score-p2').innerText = scoreP2;
         }
 
-        function sendChallenge() { socket.emit('challenge_request'); }
-        function acceptChallenge() { socket.emit('accept_challenge', challengerSocketId); }
+        function updateStatsUI() {
+            statsYouName.innerText = myName || "You";
+            statsOppName.innerText = currentOpponentName || "Opponent";
+            statsYouRecord.innerText = `${myStats.wins}W / ${myStats.losses}L (${myStats.matches})`;
+            statsOppRecord.innerText = `${oppStats.wins}W / ${oppStats.losses}L (${oppStats.matches})`;
+        }
+
+        function recordMatchResult(didWin) {
+            myStats.matches += 1;
+            oppStats.matches += 1;
+            if (didWin) {
+                myStats.wins += 1;
+                oppStats.losses += 1;
+            } else {
+                myStats.losses += 1;
+                oppStats.wins += 1;
+            }
+            updateStatsUI();
+        }
+
+        function resetToStart() {
+            localPractice = false;
+            spectatorMode = 'watch';
+            isPVP = false;
+            gameActive = false;
+            scoreP1 = 0; scoreP2 = 0;
+            updateScoreboard();
+            hideCountdown();
+            winOverlay.style.display = 'none';
+            myStats = { wins: 0, losses: 0, matches: 0 };
+            oppStats = { wins: 0, losses: 0, matches: 0 };
+            currentOpponentName = "Opponent";
+            updateStatsUI();
+            if (queueInfo.inQueue) socket.emit('queue_leave');
+            updateUI();
+        }
+
+        function confirmReset() {
+            const ok = confirm("Reset and leave the queue? This clears your stats.");
+            if (ok) resetToStart();
+        }
+
+        function openStats() {
+            const countdownVisible = countdownOverlay.style.display === 'flex';
+            if (localPractice || gameActive || countdownVisible) return;
+            statsModal.style.display = 'flex';
+        }
+
+        function closeStats() {
+            statsModal.style.display = 'none';
+        }
+
+        function toggleQueue() {
+            if (queueInfo.inQueue) socket.emit('queue_leave');
+            else socket.emit('queue_join');
+        }
+        function resetLocalMatch() {
+            scoreP1 = 0; scoreP2 = 0; gameActive = true;
+            playerY = (BASE_H - PADDLE_H) / 2; opponentY = (BASE_H - PADDLE_H) / 2;
+            resetBall();
+            updateScoreboard();
+            aiState = { fatigue: 0, error: 0, hold: 0 };
+            aiLeftState = { fatigue: 0, error: 0, hold: 0 };
+        }
+
+        function setSpectatorMode(mode, silent) {
+            spectatorMode = mode;
+            if (mode === 'ai') {
+                localPractice = true;
+                resetLocalMatch();
+                lastMatchNames = { hostName: myName, challengerName: "Computer" };
+                currentOpponentName = "Computer";
+                updateStatsUI();
+                startLocalCountdown(lastMatchNames.hostName, lastMatchNames.challengerName);
+            } else {
+                localPractice = false;
+                currentOpponentName = "Opponent";
+                updateStatsUI();
+                if (latestSpectatorState) {
+                    ball = latestSpectatorState.ball;
+                    playerY = latestSpectatorState.playerY;
+                    opponentY = latestSpectatorState.opponentY;
+                    scoreP1 = latestSpectatorState.scoreP1;
+                    scoreP2 = latestSpectatorState.scoreP2;
+                    updateScoreboard();
+                }
+            }
+            if (!silent) updateUI();
+        }
+
+        function showCountdown(seconds, hostName, challengerName) {
+            countdownNumber.innerText = seconds;
+            countdownHost.innerText = hostName;
+            countdownChallenger.innerText = challengerName;
+            countdownHost.classList.toggle('current-player', myRole === 'HOST' || localPractice);
+            countdownChallenger.classList.toggle('current-player', myRole === 'CHALLENGER');
+            countdownOverlay.style.display = 'flex';
+        }
+
+        function hideCountdown() {
+            countdownOverlay.style.display = 'none';
+        }
+
+        function startLocalCountdown(hostName, challengerName) {
+            if (localCountdownTimer) clearInterval(localCountdownTimer);
+            let remaining = 5;
+            showCountdown(remaining, hostName, challengerName);
+            localCountdownTimer = setInterval(() => {
+                remaining -= 1;
+                if (remaining <= 0) {
+                    clearInterval(localCountdownTimer);
+                    localCountdownTimer = null;
+                    hideCountdown();
+                    gameActive = true;
+                    return;
+                }
+                showCountdown(remaining, hostName, challengerName);
+            }, 1000);
+        }
+
+        function showWin(winnerName) {
+            gameActive = false;
+            winOverlay.style.display = 'flex';
+            const safeName = winnerName && winnerName !== "Player" ? winnerName : myName;
+            document.getElementById('win-message').innerText = `${safeName} WINS!`;
+            setTimeout(() => {
+                winOverlay.style.display = 'none';
+                localPractice = false;
+                isPVP = false;
+                spectatorMode = 'watch';
+                currentOpponentName = "Opponent";
+                updateStatsUI();
+                updateUI();
+            }, 1500);
+        }
+
+        function updateQueueUI() {
+            const total = queueInfo.total || 0;
+            if (queueInfo.inQueue) {
+                queueText.innerText = `Queue: ${total} (ahead: ${queueInfo.ahead})`;
+            } else {
+                queueText.innerText = `Queue: ${total}`;
+            }
+            updateUI();
+        }
+
+        function flashStatus(message, durationMs = 2500) {
+            if (statusTimeout) clearTimeout(statusTimeout);
+            statusText.innerText = message;
+            statusTimeout = setTimeout(() => {
+                statusTimeout = null;
+                updateUI();
+            }, durationMs);
+        }
 
         function resetBall() {
-            ball = { x: 400, y: 200, dx: 4 * (Math.random() > 0.5 ? 1 : -1), dy: 4 };
+            ball = { 
+                x: BASE_W / 2, 
+                y: BASE_H / 2, 
+                dx: BALL_SPEED * (Math.random() > 0.5 ? 1 : -1), 
+                dy: BALL_SPEED 
+            };
+            if (localPractice || (!isPVP && myRole === 'HOST')) {
+                aiState.error = (Math.random() - 0.5) * 30;
+                aiState.hold = 0;
+                aiLeftState.error = (Math.random() - 0.5) * 30;
+                aiLeftState.hold = 0;
+            }
         }
 
         // Host Loop
         function update() {
-            if (myRole !== 'HOST' || !gameActive) return;
+            if (!gameActive) return;
+            const runHost = myRole === 'HOST';
+            const runLocal = localPractice;
+            if (!runHost && !runLocal) return;
+            if (scoreP1 >= 5 || scoreP2 >= 5) return;
 
-            if (!isPVP) { // AI
-                opponentY += (ball.y - 40 - opponentY) * 0.1;
+            const runDemo = runHost && !isPVP && !localPractice;
+            const useAI = runLocal || runDemo;
+            if (useAI) { // AI (right paddle)
+                const center = (BASE_H - PADDLE_H) / 2;
+                if (ball.dx > 0) {
+                    aiState.fatigue = Math.min(1, aiState.fatigue + AI_FATIGUE_RATE_UP);
+                } else {
+                    aiState.fatigue = Math.max(0, aiState.fatigue - AI_FATIGUE_RATE_DOWN);
+                }
+
+                if (aiState.hold > 0) aiState.hold -= 1;
+
+                if (ball.dx > 0) {
+                    if (aiState.hold <= 0 && Math.random() < AI_MISTAKE_CHANCE_BASE + aiState.fatigue * AI_MISTAKE_CHANCE_FATIGUE) {
+                        aiState.error = (Math.random() - 0.5) * (AI_ERROR_JITTER_BASE + aiState.fatigue * AI_ERROR_JITTER_FATIGUE);
+                        aiState.hold = 30 + Math.floor(Math.random() * 40);
+                    }
+                    const target = ball.y - (PADDLE_H / 2) + aiState.error;
+                    const maxStep = AI_BASE_MAX_STEP - aiState.fatigue * 1.4;
+                    const delta = target - opponentY;
+                    opponentY += Math.max(-maxStep, Math.min(maxStep, delta * 0.18));
+                } else {
+                    opponentY += (center - opponentY) * (0.05 - aiState.fatigue * 0.02);
+                }
+            }
+            if (runDemo) { // AI (left paddle) for demo
+                const center = (BASE_H - PADDLE_H) / 2;
+                if (ball.dx < 0) {
+                    aiLeftState.fatigue = Math.min(1, aiLeftState.fatigue + AI_FATIGUE_RATE_UP);
+                } else {
+                    aiLeftState.fatigue = Math.max(0, aiLeftState.fatigue - AI_FATIGUE_RATE_DOWN);
+                }
+
+                if (aiLeftState.hold > 0) aiLeftState.hold -= 1;
+
+                if (ball.dx < 0) {
+                    if (aiLeftState.hold <= 0 && Math.random() < AI_MISTAKE_CHANCE_BASE + aiLeftState.fatigue * AI_MISTAKE_CHANCE_FATIGUE) {
+                        aiLeftState.error = (Math.random() - 0.5) * (AI_ERROR_JITTER_BASE + aiLeftState.fatigue * AI_ERROR_JITTER_FATIGUE);
+                        aiLeftState.hold = 30 + Math.floor(Math.random() * 40);
+                    }
+                    const target = ball.y - (PADDLE_H / 2) + aiLeftState.error;
+                    const maxStep = AI_BASE_MAX_STEP - aiLeftState.fatigue * 1.4;
+                    const delta = target - playerY;
+                    playerY += Math.max(-maxStep, Math.min(maxStep, delta * 0.18));
+                } else {
+                    playerY += (center - playerY) * (0.05 - aiLeftState.fatigue * 0.02);
+                }
             }
 
             ball.x += ball.dx; ball.y += ball.dy;
-            if (ball.y < 0 || ball.y > 400) ball.dy *= -1;
+            if (ball.y - BALL_R < 0 || ball.y + BALL_R > BASE_H) ball.dy *= -1;
 
-            if (ball.x < 12 && ball.y > playerY && ball.y < playerY + 80) ball.dx = Math.abs(ball.dx) * 1.05;
-            if (ball.x > 788 && ball.y > opponentY && ball.y < opponentY + 80) ball.dx = -Math.abs(ball.dx) * 1.05;
+            if (ball.x - BALL_R < PADDLE_W && ball.y > playerY && ball.y < playerY + PADDLE_H) ball.dx = Math.abs(ball.dx) * 1.05;
+            if (ball.x + BALL_R > BASE_W - PADDLE_W && ball.y > opponentY && ball.y < opponentY + PADDLE_H) ball.dx = -Math.abs(ball.dx) * 1.05;
 
-            if (ball.x < 0) { scoreP2++; scoreP2 >= 5 ? socket.emit('match_finished', {winner:'P2'}) : resetBall(); updateScoreboard(); }
-            if (ball.x > 800) { scoreP1++; scoreP1 >= 5 ? socket.emit('match_finished', {winner:'P1'}) : resetBall(); updateScoreboard(); }
+            if (ball.x < 0) {
+                if (scoreP2 >= 5) return;
+                scoreP2++;
+                if (scoreP2 >= 5) {
+                    if (runHost) socket.emit('match_finished', {winner:'P2'});
+                    if (runLocal) showWin(lastMatchNames.challengerName);
+                    else gameActive = false;
+                } else {
+                    resetBall();
+                }
+                updateScoreboard();
+            }
+            if (ball.x > BASE_W) {
+                if (scoreP1 >= 5) return;
+                scoreP1++;
+                if (scoreP1 >= 5) {
+                    if (runHost) socket.emit('match_finished', {winner:'P1'});
+                    if (runLocal) showWin(lastMatchNames.hostName);
+                    else gameActive = false;
+                } else {
+                    resetBall();
+                }
+                updateScoreboard();
+            }
 
-            socket.emit('host_update', { ball, playerY, opponentY, scoreP1, scoreP2 });
+            if (runHost) socket.emit('host_update', { ball, playerY, opponentY, scoreP1, scoreP2 });
         }
 
         function draw() {
-            ctx.clearRect(0, 0, 800, 400);
-            ctx.fillStyle = '#eee';
-            ctx.fillRect(0, playerY, 12, 80);
-            ctx.fillRect(788, opponentY, 12, 80);
-            ctx.beginPath(); ctx.arc(ball.x, ball.y, 8, 0, Math.PI*2); ctx.fill();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+            const leftControlled = myRole === 'HOST' || localPractice;
+            const rightControlled = myRole === 'CHALLENGER';
+            ctx.fillStyle = leftControlled ? '#4CAF50' : '#eee';
+            ctx.fillRect(0, playerY, PADDLE_W, PADDLE_H);
+            ctx.fillStyle = rightControlled ? '#4CAF50' : '#eee';
+            ctx.fillRect(BASE_W - PADDLE_W, opponentY, PADDLE_W, PADDLE_H);
+            ctx.fillStyle = '#f6e27f';
+            ctx.beginPath(); ctx.arc(ball.x, ball.y, BALL_R, 0, Math.PI*2); ctx.fill();
             update();
             requestAnimationFrame(draw);
         }
